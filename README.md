@@ -178,6 +178,96 @@ http://localhost:9000/api
 
 The compose file mounts `backend/models/` into the container read-only.
 
+---
+
+## Production Deployment (Ubuntu / Vast.ai / GPU Instances)
+
+When deploying on a fresh Linux server or GPU instance (like Vast.ai) where Docker-in-Docker might not be available, follow these native deployment steps for maximum performance:
+
+### 1. File Permissions (Critical)
+To prevent `403 Forbidden` and `500 Internal Server Error`, you must grant Nginx read access to the built frontend and grant the backend write access for logs and history.
+
+```bash
+# Allow Nginx to read frontend build files
+chmod -R 755 frontend/dist
+
+# Setup backend write permissions
+mkdir -p backend/logs
+chmod -R 777 backend/logs
+touch backend/history.csv
+chmod 666 backend/history.csv
+
+# Optional: Setup uncoated model symlink if missing
+cd backend/models
+ln -sf best_model.pth best_uncoated_model.pth
+cd ../..
+```
+
+### 2. Nginx Configuration
+Configure Nginx to serve the static frontend files and proxy API requests to Gunicorn. We increase the `client_max_body_size` and timeouts to handle large multi-image batch uploads.
+
+Edit `/etc/nginx/sites-enabled/default`:
+```nginx
+server {
+    listen 80 default_server;
+    server_name _;
+    
+    # Point root directly to the built frontend directory
+    root /workspace/Fertilizer_Quality_Control/frontend/dist;
+    index index.html;
+
+    # Allow large batch uploads (e.g., 250MB for multiple 18MB images)
+    client_max_body_size 250M;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~ ^/api/ {
+        proxy_pass [http://127.0.0.1:8000](http://127.0.0.1:8000);
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        
+        # Extended timeouts for heavy GPU inference processing
+        proxy_read_timeout 600s;
+        proxy_connect_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}
+```
+Restart Nginx: `service nginx restart`
+
+### 3. Running Backend with Tmux & Gunicorn
+Use `tmux` to keep the backend running after SSH disconnection, and Gunicorn for multi-worker GPU processing.
+
+```bash
+# Install gunicorn if not already installed
+python3 -m pip install gunicorn
+
+# Start a new tmux session
+tmux new -s backend
+
+# Run Gunicorn (Example optimized for 16GB VRAM / Multi-core CPU)
+cd backend
+python3 -m gunicorn \
+    --bind 0.0.0.0:8000 \
+    --timeout 600 \
+    --workers 4 \
+    --threads 4 \
+    --worker-class gthread \
+    wsgi:app
+```
+*To detach from tmux and leave it running, press `Ctrl + b` then `d`.*
+
+### Troubleshooting Production Deployments
+
+- **Frontend shows "Offline" / White Screen:** Nginx cannot access `frontend/dist`. Run `chmod -R 755 frontend/dist`.
+- **413 Content Too Large:** Upload size exceeded the Nginx limit. Increase `client_max_body_size` in the Nginx config.
+- **502 Bad Gateway:** Gunicorn is not running, or running on the wrong port. Check if the Nginx `proxy_pass` matches your Gunicorn `--bind` port (e.g., `8000`).
+- **CUDA Out of Memory (OOM):** Too many Gunicorn `--workers`. Each worker loads the model into VRAM (approx. 750MB-1.5GB each). Reduce the worker count.
+
+---
+
 ## Runtime configuration
 
 The backend reads these environment variables from `backend/src/soil_segment/config.py` and `backend/src/soil_segment/api/app.py`:
