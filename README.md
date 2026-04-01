@@ -190,6 +190,7 @@ To prevent `403 Forbidden` and `500 Internal Server Error`, you must grant Nginx
 ```bash
 # Allow Nginx to read frontend build files
 chmod -R 755 frontend/dist
+chmod -R 755 frontend/dist/assets
 
 # Setup backend write permissions
 mkdir -p backend/logs
