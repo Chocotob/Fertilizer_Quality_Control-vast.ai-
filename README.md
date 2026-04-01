@@ -224,10 +224,15 @@ server {
     }
 
     location ~ ^/api/ {
-        proxy_pass [http://127.0.0.1:8000](http://127.0.0.1:8000);
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        add_header 'Access-Control-Allow-Origin' '*' always;
+
         # Extended timeouts for heavy GPU inference processing
         proxy_read_timeout 600s;
         proxy_connect_timeout 600s;
@@ -250,13 +255,19 @@ tmux new -s backend
 # Run Gunicorn (Example optimized for 16GB VRAM / Multi-core CPU)
 cd backend
 python3 -m gunicorn \
-    --bind 0.0.0.0:8000 \
+    --bind 0.0.0.0:5000 \
     --timeout 600 \
     --workers 4 \
     --threads 4 \
     --worker-class gthread \
     wsgi:app
+
+# Run Gunicorn (Example optimized for 16GB VRAM / Multi-core CPU)
+/venv/main/bin/gunicorn --bind 0.0.0.0:5000 --timeout 300 --workers 4 --threads 4 wsgi:app
+
 ```
+
+
 *To detach from tmux and leave it running, press `Ctrl + b` then `d`.*
 
 ### Troubleshooting Production Deployments
